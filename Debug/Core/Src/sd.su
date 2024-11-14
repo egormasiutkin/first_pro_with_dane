@@ -1,0 +1,8 @@
+../Core/Src/sd.c:9:6:SdWrite	24	static
+../Core/Src/sd.c:24:15:SdRead	16	static
+../Core/Src/sd.c:38:15:SdResponse	16	static
+../Core/Src/sd.c:54:6:SdCommand	16	static
+../Core/Src/sd.c:64:15:SdInit	16	static
+../Core/Src/sd.c:98:15:SdWriteBlock	32	static
+../Core/Src/sd.c:152:15:SdReadBlock	40	static
+../Core/Src/sd.c:187:6:Display_JPG_SDCARD	24	static

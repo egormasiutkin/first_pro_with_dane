@@ -1,0 +1,9 @@
+../Core/Src/2828.c:4:6:SSD2828_Reset	1
+../Core/Src/2828.c:15:6:SPI_3W_SET_Cmd	3
+../Core/Src/2828.c:36:6:SPI_3W_SET_PAs	3
+../Core/Src/2828.c:58:15:SPI_ReadData	3
+../Core/Src/2828.c:78:6:SPI_WriteData	1
+../Core/Src/2828.c:83:6:SPI_WriteCmd	1
+../Core/Src/2828.c:89:6:GP_COMMAD_PA	1
+../Core/Src/2828.c:98:7:LCD_initial	1
+../Core/Src/2828.c:376:7:SSD2828_initial	1

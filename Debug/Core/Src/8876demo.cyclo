@@ -1,0 +1,14 @@
+../Core/Src/8876demo.c:11:6:BTE_Compare	3
+../Core/Src/8876demo.c:251:6:BTE_Color_Expansion	3
+../Core/Src/8876demo.c:474:6:BTE_Pattern_Fill	1
+../Core/Src/8876demo.c:606:6:PIP_Demo	3
+../Core/Src/8876demo.c:812:6:App_Demo_Waveform	5
+../Core/Src/8876demo.c:964:6:App_Demo_Scrolling_Text	3
+../Core/Src/8876demo.c:1219:6:App_Demo_multi_frame_buffer	7
+../Core/Src/8876demo.c:1363:6:App_Demo_slide_frame_buffer	5
+../Core/Src/8876demo.c:1477:6:App_Demo_Alpha_Blending	4
+../Core/Src/8876demo.c:1624:6:mono_Demo	1
+../Core/Src/8876demo.c:1681:6:Text_Demo	1
+../Core/Src/8876demo.c:1815:7:DMA_Demo	2
+../Core/Src/8876demo.c:1926:7:Geometric	13
+../Core/Src/8876demo.c:2102:6:gray	7

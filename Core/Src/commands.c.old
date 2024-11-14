@@ -1,0 +1,856 @@
+/*
+ * commands.c
+ *
+ *  Created on: Jan 25, 2024
+ *      Author: DaneRuyle
+ */
+
+#include "main.h"
+#include "display.h"
+#include "commands.h"
+#include "2828.h"
+#include "RA8876.h"
+#include "pattern.h"
+#include "8876demo.h"
+#include <string.h>
+enum RX_STATE{_CMD = 0,_LENGTH,_DATA};
+enum TASK{TASK_NO = 0,TASK_RESET, TASK_CLEAR,TASK_DISP0,TASK_DISP1,TASK_DISP2,TASK_DISP3,TASK_DISP4,TASK_DISP5,TASK_DISP6,TASK_DISP7,TASK_DISP8
+	,TASK_DISP9,TASK_DISP10,TASK_DISP11,TASK_DISP12,TASK_DISP13,TASK_DISP14,TASK_DISP15,TASK_DISP16,TASK_DISP17,TASK_DISP18,TASK_DISP19};
+unsigned short aRxBuffer[BUFFER_LEN] = {0};
+unsigned short mainBuffer[BUFFER_LEN] = {0};
+unsigned short aTxBuffer[BUFFER_LEN] = {0};
+unsigned char displayText[BUFFER_LEN] = {0};
+unsigned char currentTask = TASK_NO;
+unsigned char rxState = 0;
+unsigned char cmd;
+unsigned char len;
+uint16_t		  offer        = 0;
+uint16_t		  offersLeft   = 0;
+unsigned int  idleTime     = 0;      // User to calculate the packet timeout
+
+void InitCommands(void)
+{
+	rxState = _CMD;
+			HAL_UART_AbortReceive_IT(&huart3);
+		if(HAL_UART_Receive_IT(&huart3, (uint8_t *)aRxBuffer, 10) != HAL_OK)     // please see the length = 2
+		  {
+			  Error_Handler();
+		  }
+
+
+	  SSD2828_Reset();
+	  SSD2828_initial();
+	  RA8876_HW_Reset();
+	  while(LCD_StatusRead()&0x02);	 //Initial_Display_test	and  set SW2 pin2 = 1
+	  RA8876_initial();
+	  // Clear Screen
+	  Main_Image_Start_Address(layer_start_addr(10));
+	Main_Image_Width(400);
+	Main_Window_Start_XY(0,0);
+	Canvas_Image_Start_address(layer_start_addr(10));
+	Active_Window_WH(400,1280);
+	Active_Window_XY(0,0);
+	Canvas_image_width(400);
+	  Foreground_color_65k(Black);
+	  Background_color_65k(Black);
+	  Line_Start_XY(0,0);
+	  Line_End_XY(399,1279);  //  Y,X
+	  Start_Square_Fill();
+
+	  Display_ON();
+	  HAL_Delay(20);
+
+
+
+
+	CGROM_Select_Genitop_FontROM();
+	GTFont_Select_GT23L32S4W_GT23H32S4W();  //  <--- We have this chip!!
+		//Font_Width_X4();
+		//Font_Height_X4();
+		Font_Select_16x32_32x32();
+		Select_SFI_0();
+		Select_SFI_Font_Mode();
+		Select_SFI_24bit_Address();
+		Select_SFI_Waveform_Mode_0();
+		Select_SFI_0_DummyRead();
+		Select_SFI_Single_Mode();
+		SPI_Clock_Period(4);	 // Freq must setting <=20MHZ
+		Enable_SFlash_SPI();
+		WelcomeAnimation();
+		preloadScreen();
+
+}
+
+void PacketProc(void)
+{
+	  /* Set transmission flag: transfer complete */
+
+	  uint8_t                   tempBuff[5] = {0};
+	  uint8_t   ChooseAButton_extrabytes[3] = {0};
+	  ChooseAButton_extrabytes[2] = 111;
+	  if(ChooseAButton_extrabytes[2])ChooseAButton_extrabytes[2]=0;
+	 // uint8_t i = 0;
+	//  HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin);
+	/*
+	  while(1)
+		{
+		  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
+		  HAL_Delay(100);
+		  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
+		  HAL_Delay(100);
+		  i++;
+		  if(i>10) break;
+		}
+	  i=0;
+	 */
+
+
+	  //HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin);
+	  switch(rxState)
+	  {
+	    case _CMD:
+	        cmd = aRxBuffer[1];
+	        memcpy(mainBuffer,aRxBuffer,4);
+	        if(cmd != 0)    //  poll packet check
+	        {
+	            rxState = _LENGTH;
+	            if(HAL_UART_Receive_IT(&huart3, (uint8_t *)aRxBuffer, 1) != HAL_OK)     // please see the length = 1
+	            {
+	                Error_Handler();
+	            }
+	        }
+	        else
+	        {
+	            // poll packet response
+	        	// here to replay to master
+
+	        	aTxBuffer[0] = 0x0E;
+	        	aTxBuffer[1] = 0x00;
+	        	if(HAL_UART_Transmit_IT(&huart3, (uint8_t *)aTxBuffer, 2))
+	        	{
+	        		Error_Handler();
+	        	}
+	        	/*
+	        	Goto_Text_XY(0,0);
+	        	Font_Width_X1();
+	        	Font_Height_X1();
+	        	Show_String("Poll packet response");*/
+	        	if(HAL_UART_Receive_IT(&huart3, (uint8_t *)aRxBuffer, 2) != HAL_OK)     // For new command
+				{
+					Error_Handler();
+				}
+
+	        }
+	        break;
+
+	    case _LENGTH:
+	        rxState = _DATA;
+	        len = aRxBuffer[0] - 3;
+	        mainBuffer[2] = aRxBuffer[0];
+	        memcpy(mainBuffer+2,aRxBuffer,2);
+	        if(HAL_UART_Receive_IT(&huart3, (uint8_t *)aRxBuffer, len) != HAL_OK)     // please see the length = len
+	        {
+	            Error_Handler();
+	        }
+	        break;
+
+	    case _DATA:
+	        rxState = _DATA;
+	        memcpy(mainBuffer+3,aRxBuffer,2*len);
+
+	        if(crc16_ccitt_reversed_w16(mainBuffer,len+1) == mainBuffer[len+2] *256 + mainBuffer[len+1])
+	        {
+
+	            rxState = _CMD;
+	            if(HAL_UART_Receive_IT(&huart3, (uint8_t *)aRxBuffer, 2) != HAL_OK)     // please see the length = 2
+	            {
+	                Error_Handler();
+	            }
+	            if(mainBuffer[1] == 1 && mainBuffer[2] == 5)
+	            {
+	            	//reset response
+	            	currentTask = TASK_RESET;
+
+	            	break;
+	            }
+	            else  if(mainBuffer[1] == 0xB1 && mainBuffer[2] == 0x0A && mainBuffer[3] == 0x01)
+	            {
+
+	            }
+	            // response & process
+	            // here to write Dane's code ahaha
+
+	            // Dane Code Start
+
+	            //  *********************************************************
+	            //  FIRST PACKET
+	            //  *********************************************************
+	            // CLEAR SCREEN
+	            //mainBuffer[1]//
+	            if (mainBuffer[2] == 0x06 && mainBuffer[3] == 0x01 )
+	            {
+	            	// CLEAR SCREEN NOW
+	            	// To Do here -  CLEAR SCREEN
+	            	//LCD_Clear(Black);
+
+	            	currentTask = TASK_CLEAR;
+	            }
+
+
+
+	            //  *********************************************************
+	            //  SECOND PACKET
+	            //  *********************************************************
+	            // Screen 0 - TEXT
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x00 && mainBuffer[5] == 0x00)
+	            {
+	            	currentTask = TASK_DISP0;
+	            	//screen0x00();
+	            }
+
+	            // Screen 1 - Top Dollar Scroll Top / Bottom with Text
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x01 && mainBuffer[5] == 0x00)
+	            {
+	            	currentTask = TASK_DISP1;
+	            	//screen0x01();
+	            }
+
+	            // Screen 2 - GOOD LUCK
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x02 && mainBuffer[5] == 0x00)
+	            {
+	            	currentTask = TASK_DISP2;
+	            	//screen0x02();
+	            }
+
+	            // Screen 3 - TOP DOLLAR graphic ON PAYLINE WITH MAX BET AWARDS TOP DOLLAR BONUS
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x03 && mainBuffer[5] == 0x00)
+	            {
+	            	currentTask = TASK_DISP3;
+	            	//screen0x03();
+	            }
+
+
+	            // Screen 4 - 3 TOP DOLLAR graphic ON A PAYLINE AWARDS TOP DOLLAR BONUS
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x04 && mainBuffer[5] == 0x00)
+	            {
+	            	currentTask = TASK_DISP4;
+	            	//screen0x04();
+	            }
+
+
+	            // Screen 5 - TOP DOLLAR BONUS
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x05 && mainBuffer[5] == 0x00)
+	            {
+	            	currentTask = TASK_DISP5;
+	            	//screen0x05();
+	            }
+
+
+	            // Screen 6 - Screen Test
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x06 && mainBuffer[5] == 0x00)
+	            {
+	            	currentTask = TASK_DISP6;
+	            	//screen0x06();
+	            }
+
+
+	            // Screen 7 - $$$ PLAY TOP DOLLAR $$$
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x07 && mainBuffer[5] == 0x00)
+	            {
+	            	currentTask = TASK_DISP7;
+	            	//screen0x07();
+	            }
+
+
+	            // Screen 8 - YOU ARE AWARDED 4 OFFERS!
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x08 && mainBuffer[5] == 0x00)
+	            {
+	            	currentTask = TASK_DISP8;
+	            	//screen0x08();
+	            }
+
+
+	            // Screen 9 - FIRST OFFER
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x09 && mainBuffer[5] == 0x00)
+	            {
+	            	currentTask = TASK_DISP9;
+	            	//screen0x09();
+	            }
+
+
+	            // Screen 10 - SECOND OFFER
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x0A && mainBuffer[5] == 0x00)
+	            {
+	            	currentTask = TASK_DISP10;
+	            	//screen0x0a();
+	            }
+
+
+	            // Screen 11 - THIRD OFFER
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x0B && mainBuffer[5] == 0x00)
+	            {
+	            	currentTask = TASK_DISP11;
+	            	//screen0x0b();
+	            }
+
+
+	            // Screen 12 - FINAL OFFER
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x0C && mainBuffer[5] == 0x00)
+	            {
+	            	currentTask = TASK_DISP12;
+	            	//screen0x0c();
+	            }
+
+
+	            // Screen 13 - BEST PLAY SAYS  |  "TAKE OFFER"
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x0D && mainBuffer[5] == 0x00)
+	            {
+	            	currentTask = TASK_DISP13;
+	            	//screen0x0d();
+	            }
+
+
+	            // Screen 14 - BEST PLAY SAYS  |  "TRY AGAIN"
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x0E && mainBuffer[5] == 0x00)
+	            {
+	            	currentTask = TASK_DISP14;
+	            	//screen0x0e();
+	            }
+
+
+	            // Screen 15 - TAKE OFFER   or   TRY AGAIN
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x0F && mainBuffer[5] == 0x00)
+	            {
+	            	currentTask = TASK_DISP15;
+	            	//screen0x0f();
+	            }
+
+
+	            // Screen 16 - <--  CHOOSE A BUTTON  -->
+	            else if (mainBuffer[3] == 0x01 && mainBuffer[4] == 0x10 && mainBuffer[5] == 0x00)
+	            {
+	            	currentTask = TASK_DISP16;
+	            	//screen0x10();
+	            }
+
+
+	            // Screen 17 - CONGRATULATIONS YOU WIN XXXX
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x11 && mainBuffer[5] == 0x00)
+	            {
+	                // Set CONGRATS screens also get the credits from mainBuffer[6], - mainBuffer[9]
+	            	tempBuff[0] = (mainBuffer[6] - '0');   // 0 0 0 1 7
+	            	tempBuff[1] = (mainBuffer[7] - '0');   // 0 0 1 0 8
+	            	tempBuff[2] = (mainBuffer[8] - '0');   // 0 1 0 0 9
+	            	tempBuff[3] = (mainBuffer[9] - '0');   // 1 0 0 0 10
+	            	offer      = tempBuff[0] * 1000 + tempBuff[1] * 100 + tempBuff[2] * 10 + tempBuff[3];
+	            	displayText[0] = 'C';  displayText[1] = 'O';  displayText[2] = 'N';  displayText[3] = 'G';
+	            	displayText[4] = 'R';  displayText[5] = 'A';  displayText[6] = 'T';  displayText[7] = 'U';
+	            	displayText[8] = 'L';  displayText[9] = 'A';  displayText[10] = 'T'; displayText[11] = 'I';
+	            	displayText[12] = 'O'; displayText[13] = 'N'; displayText[14] = 'S'; displayText[15] = ' ';
+	            	displayText[16] = 'Y'; displayText[17] = 'O'; displayText[18] = 'U'; displayText[19] = ' ';
+	            	displayText[20] = 'W'; displayText[21] = 'I'; displayText[22] = 'N'; displayText[23] = ' ';
+	            	displayText[24] = ' '; displayText[25] = ' '; displayText[26] = ' '; displayText[27] = ' ';
+	            	displayText[28] = ' '; displayText[29] = 'C'; displayText[30] = 'R'; displayText[31] = 'E';
+	            	displayText[32] = 'D'; displayText[33] = 'I'; displayText[34] = 'T'; displayText[35] = 'S';
+	            	displayText[36] = '\0';
+
+	            	if(offer < 10)
+	            	{
+	            		displayText[24] = ' ';  displayText[25] = ' ';
+	            		displayText[26] = ' ';  displayText[27] = mainBuffer[9];
+	            	}
+	            	else if(offer < 100)
+	            	{
+	            		displayText[24] = ' ';  displayText[25] = ' ';
+	            		displayText[26] = mainBuffer[8];  displayText[27] = mainBuffer[9];
+	            	}
+	            	else if(offer < 1000)
+	            	{
+	            		displayText[24] = ' ';  displayText[25] =  mainBuffer[7];
+	            		displayText[26] = mainBuffer[8];  displayText[27] =  mainBuffer[9];
+	            	}
+	            	else
+	            	{
+	            		displayText[24] = mainBuffer[6];  displayText[25] = ',';
+	            	    displayText[26] = mainBuffer[7];  displayText[27] = mainBuffer[8];
+	            	    displayText[28] = mainBuffer[9];  displayText[29] = '\0';
+	            	}
+
+	            	// Maybe process this shit above and pass to screen0x11() function?
+	            	currentTask = TASK_DISP17;
+	            	//screen0x11();
+	            }
+
+
+	            // Screen 18 - TOTAL BONUS WIN XXXX CREDITS
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x12 && mainBuffer[5] == 0x00)
+	            {
+	                // Set TOTAL BONUS WIN screens also get the credits from mainBuffer[6], - mainBuffer[9]
+	            	tempBuff[0] = (mainBuffer[6] - '0');
+	            	tempBuff[1] = (mainBuffer[7] - '0');
+	            	tempBuff[2] = (mainBuffer[8] - '0');
+	            	tempBuff[3] = (mainBuffer[9] - '0');
+	            	offer      = tempBuff[0] * 1000 + tempBuff[1] * 100 + tempBuff[2] * 10 + tempBuff[3];
+	            	displayText[0] = 'T';  displayText[1] = 'O';  displayText[2] = 'T';  displayText[3] = 'A';
+	            	displayText[4] = 'L';  displayText[5] = ' ';  displayText[6] = 'B';  displayText[7] = 'O';
+	            	displayText[8] = 'N';  displayText[9] = 'U';  displayText[10]= 'S';  displayText[11] = ' ';
+	            	displayText[12] = 'W'; displayText[13] = 'I'; displayText[14] = 'N'; displayText[15] = ' ';
+	            	displayText[16] = ' '; displayText[17] = ' '; displayText[18] = ' '; displayText[19] = ' ';
+	            	displayText[20] = 'C'; displayText[21] = 'R'; displayText[22] = 'E'; displayText[23] = 'D';
+	            	displayText[24] = 'I'; displayText[25] = 'T'; displayText[26] = 'S'; displayText[27] = '\0';
+	            	if(offer < 10)
+	            	{
+	            		displayText[16] = ' ';  displayText[17] = ' ';
+	            		displayText[18] = ' ';  displayText[19] = mainBuffer[9];
+	            	}
+	            	else if(offer < 100)
+	            	{
+	            		displayText[16] = ' ';  displayText[17] = ' ';
+	            		displayText[18] = mainBuffer[8];  displayText[19] = mainBuffer[9];
+	            	}
+	            	else if(offer < 1000)
+	            	{
+	            		displayText[16] = ' ';  displayText[17] = mainBuffer[7];
+	            		displayText[18] = mainBuffer[8];  displayText[19] = mainBuffer[9];
+	            	}
+	            	else
+	            	{
+	            		displayText[16] = mainBuffer[6];  displayText[17] = ',';
+	            	    displayText[18] = mainBuffer[7];  displayText[19] = mainBuffer[8];
+	            	    displayText[20] = mainBuffer[9];  displayText[21] = ' ';
+	            	    displayText[22] = 'C';  displayText[23] = 'R';  displayText[24] = 'E';
+	            	    displayText[25] = 'D';  displayText[26] = 'I';  displayText[27] = 'T';
+	            	    displayText[28] = 'S';  displayText[29] = '\0';
+	            	}
+
+	            	// Maybe process this shit above and pass to screen0x12() function?
+	            	currentTask = TASK_DISP18;
+	            	//screen0x12();
+	            }
+
+
+	            // Screen 19 - CURRENT OFFER, OFFERS LEFT, ARROWS, XXXX, Y
+	            else if (mainBuffer[3] == 0x00 && mainBuffer[4] == 0x13 && mainBuffer[5] == 0x00)
+	            {
+	                // Set CURRENT OFFER, OFFERS LEFT screen also get the credits from mainBuffer[6], - mainBuffer[10]
+	            	// mainBuffer[2] - 2 should == (Y) Offers Left
+	            	// mainBuffer[2] - 6, 5, 4, 3 should == (XXXX) Current offer amount
+
+	            	tempBuff[0] = (mainBuffer[6] - '0');
+	            	tempBuff[1] = (mainBuffer[7] - '0');
+	            	tempBuff[2] = (mainBuffer[8] - '0');
+	            	tempBuff[3] = (mainBuffer[9] - '0');
+	            	offersLeft      = tempBuff[0] * 1000 + tempBuff[1] * 100 + tempBuff[2] * 10 + tempBuff[3];
+	            	offersLeft = mainBuffer[10] - '0';
+	            	// This screen will need work.  It should say CURRENT OFFER and OFFERS LEFT on the top
+	            	// and below that, it should show the offer amount and offers left in a BIG FONT...
+	            	// So, position 0,0 <space> CURRENT OFFER <tab> OFFERS LEFT
+	            	// <space> <space> <super big font> <XXXX> <tab> <Y>
+
+	            	// Maybe process this shit above and pass to screen0x13() function?
+	            	currentTask = TASK_DISP19;
+	            	//screen0x13();
+	            }
+
+
+
+
+	            //  *********************************************************
+	            //  THIRD PACKET   - mainBuffer[3] == 0x01
+	            //  *********************************************************
+	            // Show screen
+	            else if (mainBuffer[3] == 0x01 && mainBuffer[4] == 0x00 && mainBuffer[5] == 0x00)
+	            {
+	                // Show stored screen. 0x01, 0x00, 0x00
+	            	// Appears when there is text on the screen
+	             	currentTask = TASK_DISP1;
+	            }
+
+	            else if (mainBuffer[3] == 0x01 && mainBuffer[4] == 0x00 && mainBuffer[5] == 0x10)
+	            {
+	            	// Show stored screen.. 0x01, 0x00, 0x10  what is the difference?
+	            	//  0x10 appears on the FIRST, SECOND, THIRD, FINAL offer screens
+	            	//  0x10 also appears on CONGRATS, TOTAL BONUS WIN, and CURRENT OFFER, OFFERS LEFT w/ARROWS screen
+	            	//  This appears on screens where there are animations
+	            	currentTask = TASK_DISP2;
+	            	if (offersLeft > 0)
+	            	{
+	            	  // since this command is used for other screens,
+	            	  // The intention of this if statement is to be true if we are on the CURRENT OFFER | OFFERS LEFT screen
+	            	}
+
+	            }
+
+	            else if (mainBuffer[3] == 0x01 && mainBuffer[4] == 0x00 && mainBuffer[5] == 0x14)
+	            {
+	            	//  This appeared when the door was closed and CALL ATTENDANT was displayed..
+	            	currentTask = TASK_DISP3;
+
+	            }
+
+	            else if (mainBuffer[3] == 0x01 && mainBuffer[4] == 0x00 && mainBuffer[5] == 0x30)
+	            {
+	            	// Show stored screen.. 0x01, 0x00, 0x30  what is the difference?
+	            	//  0x30 appears to be some sort of time delay.
+	            	//  This appears on screens where there are animations
+	            	currentTask = TASK_DISP4;
+	            	if (mainBuffer[2] == 0x0A )
+					{
+						// This occurs when a screen also has the Choose a Button screen added to it
+						// Some sort of delay for screen frames
+						ChooseAButton_extrabytes[0] = (mainBuffer[2] - 4);
+						ChooseAButton_extrabytes[1] = (mainBuffer[2] - 3);
+					}
+	            }
+	        }
+	        //  ALL DONE DANE CODE
+	        else
+	        {
+	        	rxState = _CMD;
+	        	if(HAL_UART_Receive_IT(&huart3, (uint8_t *)aRxBuffer, 2) != HAL_OK)     // please see the length = len
+				{
+					Error_Handler();
+				}
+	        	//crc failure
+	        }
+
+	        break;
+
+	    default:
+	    	rxState = _CMD;
+	    	if(HAL_UART_Receive_IT(&huart3, (uint8_t *)aRxBuffer, 2) != HAL_OK)     // please see the length = len
+			{
+				Error_Handler();
+			}
+	    	break;
+
+	  }
+}
+
+void HandlePacket(void)
+{
+	if(currentTask == TASK_RESET)
+		{
+			currentTask = TASK_NO;
+			aTxBuffer[0] = 0x0E;
+			aTxBuffer[1] = 0x00;
+			if(HAL_UART_Transmit_IT(&huart3, (uint8_t *)aTxBuffer, 2))
+			{
+				Error_Handler();
+			}
+
+			Goto_Text_XY(80,0);
+			Font_Width_X1();
+			Font_Height_X1();
+			Show_String("RESET response");
+		}
+		else if(currentTask == TASK_CLEAR)
+		{
+			currentTask = TASK_NO;
+
+			Color_Bar_OFF();
+			Foreground_color_65k(Black);
+			Background_color_65k(Black);
+			Line_Start_XY(0,0);
+			Line_End_XY(399,1279);  // 1280x400
+			Start_Square_Fill();
+		}
+		else if(currentTask == TASK_DISP1)
+		{
+			currentTask = TASK_NO;
+			Font_Background_select_Color();
+			Foreground_color_65k(White);
+			Background_color_65k(Black);
+//			Font_Background_select_Transparency();
+			Set_GTFont_Decoder(0x21);
+			Goto_Text_XY(133,0);
+			Show_String((char *)displayText);
+		}
+		else if(currentTask == TASK_DISP2)
+		{
+			currentTask = TASK_NO;
+			Select_Main_Window_8bpp();
+			Main_Image_Start_Address(layer_start_addr(10));
+			Main_Image_Width(400);
+			Main_Window_Start_XY(0,0);
+
+			Canvas_Image_Start_address(layer_start_addr(10));//Layer 1
+			Canvas_image_width(400);//
+			Active_Window_XY(0,0);
+			Active_Window_WH(400,1280);
+
+			Font_Background_select_Color();
+			Foreground_color_65k(Black);
+			Background_color_65k(White);
+			Line_Start_XY(0,0);
+			Line_End_XY(399,1247);
+			Start_Square_Fill();
+
+
+			CGROM_Select_Genitop_FontROM();
+			GTFont_Select_GT23L32S4W_GT23H32S4W();  //  <--- We have this chip!!
+			Font_Width_X4();
+			Font_Height_X4();
+			Font_Select_16x32_32x32();
+
+			Select_SFI_0();
+			Select_SFI_Font_Mode();
+			Select_SFI_24bit_Address();
+			Select_SFI_Waveform_Mode_0();
+			Select_SFI_0_DummyRead();
+			Select_SFI_Single_Mode();
+			SPI_Clock_Period(4);	 // Freq must setting <=20MHZ
+			Enable_SFlash_SPI();
+
+			Font_Background_select_Color();
+			Foreground_color_65k(White);
+			Background_color_65k(Black);
+			Set_GTFont_Decoder(0x21);
+			Goto_Text_XY(133,0);
+			Show_String((char *)displayText);
+		}
+		else if(currentTask == TASK_DISP3)
+		{
+			currentTask = TASK_NO;
+			Select_Main_Window_8bpp();
+			Main_Image_Start_Address(layer_start_addr(10));
+			Main_Image_Width(400);
+			Main_Window_Start_XY(0,0);
+
+			Canvas_Image_Start_address(layer_start_addr(10));//Layer 1
+			Canvas_image_width(400);//
+			Active_Window_XY(0,0);
+			Active_Window_WH(400,1280);
+
+			Foreground_color_65k(White);
+			Line_Start_XY(0,0);
+			Line_End_XY(399,1247);
+			Start_Square_Fill();
+
+
+			CGROM_Select_Genitop_FontROM();
+			GTFont_Select_GT23L32S4W_GT23H32S4W();  //  <--- We have this chip!!
+			Font_Width_X4();
+			Font_Height_X4();
+	//           	    CGROM_Select_Genitop_FontROM();
+			Font_Select_16x32_32x32();
+
+//			Select_SFI_0();
+//			Select_SFI_Font_Mode();
+//			Select_SFI_24bit_Address();
+//			Select_SFI_Waveform_Mode_0();
+//			Select_SFI_0_DummyRead();
+//			Select_SFI_Single_Mode();
+//			SPI_Clock_Period(4);	 // Freq must setting <=20MHZ
+//			Enable_SFlash_SPI();
+
+			Foreground_color_65k(color65k_black);
+			Background_color_65k(color65k_white);
+			Font_Background_select_Transparency();
+			Set_GTFont_Decoder(0x21);
+			Goto_Text_XY(133,0);
+			Show_String((char *)displayText);
+		}
+		else if(currentTask == TASK_DISP4)
+		{
+			currentTask = TASK_NO;
+
+			Select_Main_Window_8bpp();
+			Main_Image_Start_Address(layer_start_addr(10));
+			Main_Image_Width(400);
+			Main_Window_Start_XY(0,0);
+
+			Canvas_Image_Start_address(layer_start_addr(10));//Layer 1
+			Canvas_image_width(400);//
+			Active_Window_XY(0,0);
+			Active_Window_WH(400,1280);
+
+			Foreground_color_65k(Black);
+			Line_Start_XY(0,0);
+			Line_End_XY(399,1247);
+			Start_Square_Fill();
+
+
+			CGROM_Select_Genitop_FontROM();
+			GTFont_Select_GT23L32S4W_GT23H32S4W();  //  <--- We have this chip!!
+			Font_Width_X4();
+			Font_Height_X4();
+	//           	    CGROM_Select_Genitop_FontROM();
+			Font_Select_16x32_32x32();
+
+			Select_SFI_0();
+			Select_SFI_Font_Mode();
+			Select_SFI_24bit_Address();
+			Select_SFI_Waveform_Mode_0();
+			Select_SFI_0_DummyRead();
+			Select_SFI_Single_Mode();
+			SPI_Clock_Period(4);	 // Freq must setting <=20MHZ
+			Enable_SFlash_SPI();
+
+			Foreground_color_65k(color65k_black);
+			Background_color_65k(color65k_white);
+			Font_Background_select_Transparency();
+			Set_GTFont_Decoder(0x21);
+			Goto_Text_XY(133,0);
+			Show_String((char *)displayText);
+		}
+		else if(currentTask == TASK_DISP5) screen0x05();
+		else if(currentTask == TASK_DISP6) screen0x06();
+		else if(currentTask == TASK_DISP7) screen0x07();
+		else if(currentTask == TASK_DISP8) screen0x08();
+		else if(currentTask == TASK_DISP9) screen0x09();
+		else if(currentTask == TASK_DISP10) screen0x0a();
+		else if(currentTask == TASK_DISP11) screen0x0b();
+		else if(currentTask == TASK_DISP12) screen0x0c();
+		else if(currentTask == TASK_DISP13) screen0x0d();
+		else if(currentTask == TASK_DISP14) screen0x0e();
+		else if(currentTask == TASK_DISP15) screen0x0f();
+		else if(currentTask == TASK_DISP16) screen0x10();
+		else if(currentTask == TASK_DISP17) screen0x11();
+		else if(currentTask == TASK_DISP18) screen0x12();
+		else if(currentTask == TASK_DISP19) screen0x13();
+
+		if (idleTime == TIME_LIMIT) {
+			idleTime = TIME_LIMIT+1;
+			HAL_UART_AbortReceive_IT(&huart3);
+			if(HAL_UART_Receive_IT(&huart3, (uint8_t *)aRxBuffer, 2) != HAL_OK)     // please see the length = 2
+			{
+				Error_Handler();
+			}
+			// Reset timeStart after every packet received like this - timeStart = HAL_GetTick();
+			// This means there is no data coming in on the serial line.
+			// Play "NO DATA" on the screen.. The original display would slide "NO DATA"
+			// off the screen to the left, or drop it in from the top.  Maybe after 10 minutes
+		    // we can turn into a digital photo frame and show pictures on the SD card?
+
+			// Clear the screen
+			/*
+	    	Canvas_Image_Start_address(layer_start_addr(1));//
+	        Foreground_color_65k(Black);
+	    	Line_Start_XY(0,0);
+	    	Line_End_XY(399,1279);
+	    	Start_Square_Fill();
+
+	    	//Clear layer3 to color black
+	    	Canvas_Image_Start_address(layer_start_addr(2));//
+	        Foreground_color_65k(Black);
+	    	Line_Start_XY(0,0);
+	    	Line_End_XY(399,1279);
+	    	Start_Square_Fill();
+
+	    	//Clear layer4 to color black
+	    	Canvas_Image_Start_address(layer_start_addr(3));//
+	        Foreground_color_65k(Black);
+	    	Line_Start_XY(0,0);
+	    	Line_End_XY(399,1279);
+	    	Start_Square_Fill();
+
+	    	//Clear layer5 to color black
+	    	Canvas_Image_Start_address(layer_start_addr(4));//
+	        Foreground_color_65k(Black);
+	    	Line_Start_XY(0,0);
+	    	Line_End_XY(399,1279);
+	    	Start_Square_Fill();
+
+	    	//Clear layer6 to color black
+	    	Canvas_Image_Start_address(layer_start_addr(5));//
+	        Foreground_color_65k(Black);
+	    	Line_Start_XY(0,0);
+	    	Line_End_XY(399,1279);
+	    	Start_Square_Fill();
+
+	    	//Clear layer7 to color black
+	    	Canvas_Image_Start_address(layer7_start_addr);//
+	        Foreground_color_65k(Black);
+	    	Line_Start_XY(0,0);
+	    	Line_End_XY(399,1279);
+	    	Start_Square_Fill();
+	    	*/
+
+	    	Foreground_color_65k(color65k_black);
+	    	Background_color_65k(Black);
+	    	Line_Start_XY(0,0);
+	    	Line_End_XY(399,1279);  // 1280x400
+	    	Start_Square_Fill();
+
+	    	// Show NO DATA
+	    	displayText[0] = 'N';
+	    	displayText[1] = 'O';
+	    	displayText[2] = ' ';
+	    	displayText[3] = 'D';
+	    	displayText[4] = 'A';
+	    	displayText[5] = 'T';
+	    	displayText[6] = 'A';
+	    	displayText[7] = '\0';
+
+	     	Select_Main_Window_8bpp();
+	    	Main_Image_Start_Address(layer_start_addr(10));
+	    	Main_Image_Width(400);
+	    	Main_Window_Start_XY(0,0);
+
+	    	Canvas_Image_Start_address(layer_start_addr(10));//Layer 1
+	    	Canvas_image_width(400);//
+	        Active_Window_XY(0,0);
+	    	Active_Window_WH(400,1280);
+
+	     	Foreground_color_65k(Red);
+	    	Line_Start_XY(0,0);
+	    	Line_End_XY(399,1279);
+	    	Start_Square_Fill();
+
+	    	CGROM_Select_Genitop_FontROM();
+	        GTFont_Select_GT23L32S4W_GT23H32S4W();  //  <--- We have this chip!!
+	   	    Font_Width_X4();
+	        Font_Height_X4();
+	        Font_Select_16x32_32x32();
+
+//	  	    Select_SFI_0();
+//	        Select_SFI_Font_Mode();
+//	        Select_SFI_24bit_Address();
+//	        Select_SFI_Waveform_Mode_0();
+//	        Select_SFI_0_DummyRead();
+//	        Select_SFI_Single_Mode();
+//	        SPI_Clock_Period(4);	 // Freq must setting <=20MHZ
+//	    	Enable_SFlash_SPI();
+
+	        Foreground_color_65k(color65k_black);
+	  	    //Background_color_65k(color65k_white);
+	        Background_color_65k(Red);
+	  	    Font_Background_select_Transparency();
+	     	Set_GTFont_Decoder(0x21);
+	     	Goto_Text_XY(133,360);
+	    	Show_String((char *)displayText);
+
+	    	// Then I guess we just sit here...
+	    	//while(1);
+	    }
+}
+
+
+
+
+
+/**
+  * @brief  Calculate CRC-16-CCITT reversed.
+	* @param  data : pointer of data to caculate.
+  * @param  length : data's length
+  * @retval the CRC checksum value
+  */
+uint16_t crc16_ccitt_reversed_w16(const uint16_t* data, size_t length)
+{
+	uint16_t crc = 0x0000; // Common initial value
+	uint16_t poly = 0x8408; // Reversed polynomial for CRC-16-CCITT
+
+	for (size_t i = 0; i < length; i++) {
+		crc ^= (data[i]&0x00FF);
+		for (uint8_t j = 0; j < 8; j++) {
+			if (crc & 0x0001) {
+				crc = (crc >> 1) ^ poly;
+			}
+			else {
+				crc >>= 1;
+			}
+		}
+	}
+	return crc;
+}
